@@ -1,0 +1,54 @@
+# --- Python cache & environment ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+ENV/
+*.env
+pyvenv.cfg
+
+# --- Jupyter Notebook checkpoints ---
+.ipynb_checkpoints/
+
+# --- Logs ---
+*.log
+
+# --- Datasets ---
+dataset/
+dataset/yolo/images/
+dataset/yolo/labels/
+*.csv
+*.tsv
+*.json
+*.xlsx
+
+# --- Models & weights ---
+*.pt
+*.onnx
+*.weights
+models/
+checkpoints/
+
+# --- Training outputs (YOLO runs, plots, confusion matrices, etc.) ---
+runs/
+outputs/
+*.jpg
+*.png
+*.jpeg
+*.svg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.h5
+*.pkl
+*.joblib
+*.npy
+*.npz
+
+# --- System files ---
+.DS_Store
+Thumbs.db
