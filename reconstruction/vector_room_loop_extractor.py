@@ -3,8 +3,7 @@ import os
 from collections import defaultdict
 
 
-INPUT_PATH = "outputs/reconstruction/vector_wall_graph_v2.json"
-
+INPUT_PATH = "outputs/reconstruction/vector_wall_graph_v3.json"
 OUTPUT_PATH = "outputs/reconstruction/vector_rooms.json"
 
 

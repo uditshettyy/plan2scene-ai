@@ -1,122 +1,93 @@
+"""
+create_vector_room_floor_mesh.py
+
+Stage: room polygons -> floor mesh
+
+Input:  outputs/vector_rooms.json   (from vector_room_face_extractor.py)
+Output: outputs/meshes/vector_room_floors.obj
+
+Since vector_room_face_extractor.py now guarantees clean, non-self-
+intersecting, non-duplicated polygons (one per actual room, by
+construction of the planar face traversal), triangulation here is
+straightforward -- no special-casing for nested/duplicate polygons is
+needed, unlike with the old DFS-based room list.
+
+Usage:
+    python create_room_floor_mesh.py outputs/vector_rooms.json outputs/meshes/vector_room_floors.obj
+"""
+
 import json
-import trimesh
 import os
+import sys
+
+import numpy as np
+import trimesh
+from shapely.geometry import Polygon
+from shapely.ops import triangulate as shapely_triangulate
 
 
-INPUT = "outputs/reconstruction/valid_room_polygons.json"
+def triangulate_room(polygon_pts):
+    poly = Polygon(polygon_pts)
+    if not poly.is_valid:
+        poly = poly.buffer(0)  # attempt self-repair for near-valid polygons
+    if poly.is_empty or poly.area < 1.0:
+        return None
 
-OUTPUT = "outputs/meshes/room_floors.obj"
+    # constrained triangulation: use shapely's triangulate on the
+    # polygon's vertices, then keep only triangles whose centroid
+    # falls inside the original polygon (this correctly handles
+    # concave rooms, which naive fan triangulation does not).
+    candidate_tris = shapely_triangulate(poly)
+    kept = [t for t in candidate_tris if poly.contains(t.centroid)]
+    if not kept:
+        return None
 
-
-FLOOR_HEIGHT = 0
-
-
-
-def polygon_to_mesh(points):
-
-    vertices = []
-
+    verts = []
     faces = []
+    for tri in kept:
+        coords = list(tri.exterior.coords)[:3]
+        base = len(verts)
+        for x, y in coords:
+            verts.append([x, y, 0.0])
+        faces.append([base, base + 1, base + 2])
+
+    return trimesh.Trimesh(vertices=np.array(verts), faces=np.array(faces), process=False)
 
 
-    # create vertices
-    for x,y in points:
+def main(rooms_path, out_path):
+    with open(rooms_path) as f:
+        data = json.load(f)
 
-        vertices.append(
-            [
-                x,
-                FLOOR_HEIGHT,
-                -y
-            ]
-        )
+    rooms = data["rooms"]
+    meshes = []
+    skipped = 0
+    for room in rooms:
+        mesh = triangulate_room(room["polygon"])
+        if mesh is None:
+            skipped += 1
+            continue
+        meshes.append(mesh)
 
+    if not meshes:
+        print(f"[create_room_floor_mesh] WARNING: no valid room polygons "
+              f"({len(rooms)} room(s) in input, {skipped} degenerate). "
+              f"This means room/wall-graph extraction hasn't produced a "
+              f"closed room yet -- fix that upstream. Skipping floor mesh "
+              f"output (no {out_path} written) so the rest of the pipeline "
+              f"can still run and you can inspect walls/doors/windows.")
+        return
 
-    # triangulate polygon using fan
-    for i in range(1,len(points)-1):
+    combined = trimesh.util.concatenate(meshes)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    combined.export(out_path)
 
-        faces.append(
-            [
-                0,
-                i,
-                i+1
-            ]
-        )
-
-
-    return vertices,faces
-
-
-
-with open(INPUT) as f:
-    rooms=json.load(f)
-
-
-
-all_vertices=[]
-all_faces=[]
+    print(f"[create_room_floor_mesh] {len(rooms)} room polygons -> "
+          f"{len(meshes)} floor meshes ({skipped} skipped as degenerate)")
+    print(f"[create_room_floor_mesh] {len(combined.vertices)} verts / "
+          f"{len(combined.faces)} faces -> {out_path}")
 
 
-offset=0
-
-
-for room in rooms:
-
-    points=[
-        tuple(p)
-        for p in room["polygon"]
-    ]
-
-
-    vertices,faces = polygon_to_mesh(points)
-
-
-    all_vertices.extend(vertices)
-
-
-    for face in faces:
-
-        all_faces.append(
-            [
-                x+offset
-                for x in face
-            ]
-        )
-
-
-    offset += len(vertices)
-
-
-
-mesh = trimesh.Trimesh(
-    vertices=all_vertices,
-    faces=all_faces,
-    process=True
-)
-
-
-mesh.fix_normals()
-
-
-os.makedirs(
-    "outputs/meshes",
-    exist_ok=True
-)
-
-
-mesh.export(
-    OUTPUT
-)
-
-
-print("Rooms:",
-      len(rooms))
-
-print("Vertices:",
-      len(mesh.vertices))
-
-print("Faces:",
-      len(mesh.faces))
-
-
-print("Saved:")
-print(OUTPUT)
+if __name__ == "__main__":
+    rooms_path = sys.argv[1] if len(sys.argv) > 1 else "outputs/vector_rooms.json"
+    out_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/meshes/vector_room_floors.obj"
+    main(rooms_path, out_path)
