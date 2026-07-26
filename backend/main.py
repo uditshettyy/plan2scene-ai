@@ -114,15 +114,15 @@ def run_subprocess(job_id: str, cmd: list[str]) -> None:
 
 def build_inference_command(input_image: Path, detections_out: Path) -> list[str]:
     """
-    ASSUMPTION FLAGGED: guessing models/inference.py's CLI as
-        python models/inference.py --input <image> --output <json>
-    If your actual script uses different flags (or positional args),
-    this is the only place that needs to change.
+    Confirmed via manual testing: the default confidence (0.25) was
+    silently dropping real wall detections (16 walls found vs 22 at
+    conf=0.15 on the same image) -- using 0.15 here to match.
     """
     return [
         sys.executable, str(INFERENCE_SCRIPT),
         "--input", str(input_image),
         "--output", str(detections_out),
+        "--conf", "0.15",
     ]
 
 

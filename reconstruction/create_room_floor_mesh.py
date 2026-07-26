@@ -1,4 +1,4 @@
-"""
+﻿"""
 create_vector_room_floor_mesh.py
 
 Stage: room polygons -> floor mesh
@@ -54,11 +54,30 @@ def triangulate_room(polygon_pts):
     return trimesh.Trimesh(vertices=np.array(verts), faces=np.array(faces), process=False)
 
 
-def main(rooms_path, out_path):
+def main(rooms_path, out_path, wall_segments_path=None):
     with open(rooms_path) as f:
         data = json.load(f)
 
     rooms = data["rooms"]
+    used_fallback = False
+
+    if not rooms and wall_segments_path and os.path.exists(wall_segments_path):
+        with open(wall_segments_path) as f:
+            segs = json.load(f)
+        room_boxes = segs.get("room_boxes", [])
+        if room_boxes:
+            used_fallback = True
+            print(f"[create_room_floor_mesh] wall-graph produced 0 rooms -- "
+                  f"falling back to {len(room_boxes)} raw YOLO 'room' boxes "
+                  f"as approximate rectangular floors. These are NOT precise "
+                  f"room polygons (no shared-wall trimming between adjacent "
+                  f"rooms, so floors may overlap slightly) -- fix the "
+                  f"underlying wall detection/graph for accurate rooms.")
+            rooms = [{"polygon": [
+                [b["bbox"][0], b["bbox"][1]], [b["bbox"][2], b["bbox"][1]],
+                [b["bbox"][2], b["bbox"][3]], [b["bbox"][0], b["bbox"][3]],
+            ]} for b in room_boxes]
+
     meshes = []
     skipped = 0
     for room in rooms:
@@ -70,18 +89,17 @@ def main(rooms_path, out_path):
 
     if not meshes:
         print(f"[create_room_floor_mesh] WARNING: no valid room polygons "
-              f"({len(rooms)} room(s) in input, {skipped} degenerate). "
-              f"This means room/wall-graph extraction hasn't produced a "
-              f"closed room yet -- fix that upstream. Skipping floor mesh "
-              f"output (no {out_path} written) so the rest of the pipeline "
-              f"can still run and you can inspect walls/doors/windows.")
+              f"({len(rooms)} room(s) in input, {skipped} degenerate), and "
+              f"no usable fallback. Skipping floor mesh output (no {out_path} "
+              f"written) so the rest of the pipeline can still run.")
         return
 
     combined = trimesh.util.concatenate(meshes)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     combined.export(out_path)
 
-    print(f"[create_room_floor_mesh] {len(rooms)} room polygons -> "
+    source = "YOLO room-box fallback" if used_fallback else "wall-graph face extraction"
+    print(f"[create_room_floor_mesh] {len(rooms)} room polygons ({source}) -> "
           f"{len(meshes)} floor meshes ({skipped} skipped as degenerate)")
     print(f"[create_room_floor_mesh] {len(combined.vertices)} verts / "
           f"{len(combined.faces)} faces -> {out_path}")
@@ -90,4 +108,5 @@ def main(rooms_path, out_path):
 if __name__ == "__main__":
     rooms_path = sys.argv[1] if len(sys.argv) > 1 else "outputs/vector_rooms.json"
     out_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/meshes/vector_room_floors.obj"
-    main(rooms_path, out_path)
+    wall_segments_path = sys.argv[3] if len(sys.argv) > 3 else None
+    main(rooms_path, out_path, wall_segments_path)

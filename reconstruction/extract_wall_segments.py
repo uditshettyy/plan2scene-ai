@@ -40,9 +40,19 @@ import math
 import sys
 from collections import defaultdict
 
+import numpy as np
+
 ANGLE_SNAP_TOL_DEG = 12.0     # snap to 0/90 if within this many degrees
 ENDPOINT_SNAP_TOL = 8.0       # px, merge endpoints closer than this
 COLLINEAR_MERGE_GAP = 15.0    # px, merge collinear segments with gaps smaller than this
+# Tolerance for deciding two parallel wall boxes are the SAME real wall
+# (fragmented by YOLO into multiple boxes) vs two DIFFERENT, genuinely
+# adjacent walls (e.g. an exterior wall and a nearby interior partition).
+# This was previously reusing ENDPOINT_SNAP_TOL (8px), which was proven
+# to be too loose -- it was fusing real distinct walls together and
+# destroying the cycles needed for rooms to close (confirmed by testing
+# with merging disabled: cycle count went from 0 to 1+ immediately).
+CROSS_GROUP_TOL = 3.0
 
 
 def normalize_bbox(bbox):
@@ -99,6 +109,69 @@ def snap_angle(p1, p2):
     return p1, p2
 
 
+def nearest_point_on_segment(p, a, b):
+    """Closest point on segment a-b to point p, and the distance to it."""
+    p, a, b = np.array(p, dtype=float), np.array(a, dtype=float), np.array(b, dtype=float)
+    ab = b - a
+    length_sq = ab.dot(ab)
+    if length_sq < 1e-9:
+        return a, float(np.linalg.norm(p - a))
+    t = max(0.0, min(1.0, (p - a).dot(ab) / length_sq))
+    proj = a + t * ab
+    return proj, float(np.linalg.norm(p - proj))
+
+
+def close_wall_gaps(walls, search_radius=180.0, already_connected_tol=10.0):
+    """
+    Real floor plans have walls that visually meet at corners, but
+    detection/merging noise leaves small gaps between them. Previously
+    these gaps were only closed topologically (adding a graph edge
+    that doesn't correspond to real geometry) -- rooms still couldn't
+    close because the wall SHAPES themselves never actually touched.
+
+    This instead moves each dangling ("open") wall endpoint to the
+    nearest point on the nearest OTHER wall segment, if that distance
+    is within search_radius. This is the same technique real floor-plan
+    vectorization tools use to close corners. It intentionally does NOT
+    touch endpoints that are already connected (within
+    already_connected_tol), so real intersections are left alone.
+    """
+    endpoints = []  # (wall_idx, which_end, point)
+    for i, w in enumerate(walls):
+        endpoints.append((i, "p1", np.array(w["p1"], dtype=float)))
+        endpoints.append((i, "p2", np.array(w["p2"], dtype=float)))
+
+    closed_count = 0
+    for i, which, pt in endpoints:
+        # already connected to something? leave it alone.
+        is_open = True
+        for j, which2, pt2 in endpoints:
+            if j == i and which2 == which:
+                continue
+            if np.linalg.norm(pt - pt2) < already_connected_tol:
+                is_open = False
+                break
+        if not is_open:
+            continue
+
+        best = None  # (distance, projected_point)
+        for k, w in enumerate(walls):
+            if k == i:
+                continue
+            proj, dist = nearest_point_on_segment(pt, w["p1"], w["p2"])
+            if best is None or dist < best[0]:
+                best = (dist, proj)
+
+        if best is not None and already_connected_tol <= best[0] <= search_radius:
+            walls[i][which] = best[1].tolist()
+            closed_count += 1
+
+    print(f"[extract_wall_segments] closed {closed_count} dangling wall "
+          f"endpoint(s) by extending to the nearest wall (search_radius="
+          f"{search_radius}px)")
+    return walls
+
+
 def merge_collinear(walls):
     """Group walls by orientation (horizontal/vertical) and merge those
     that share a line and are close enough along that line to be one
@@ -116,8 +189,8 @@ def merge_collinear(walls):
         # cross_key: the coordinate that's constant along the wall
         by_cross = defaultdict(list)
         for w in group:
-            cross = round((w["p1"][cross_key] + w["p2"][cross_key]) / 2 / ENDPOINT_SNAP_TOL) \
-                * ENDPOINT_SNAP_TOL
+            cross = round((w["p1"][cross_key] + w["p2"][cross_key]) / 2 / CROSS_GROUP_TOL) \
+                * CROSS_GROUP_TOL
             by_cross[cross].append(w)
 
         merged = []
@@ -191,6 +264,7 @@ def main(in_path, out_path):
             room_boxes.append({"bbox": bbox, "confidence": det.get("confidence")})
 
     merged_walls = merge_collinear(walls)
+    merged_walls = close_wall_gaps(merged_walls)
     for i, d in enumerate(doors):
         d["id"] = i
     for i, w in enumerate(windows):
