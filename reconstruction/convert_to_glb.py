@@ -45,9 +45,44 @@ def colorize(mesh, rgba):
     return mesh
 
 
+def zup_to_yup_centered_transform(center_x, center_y):
+    """
+    Our pipeline builds geometry in a Z-up convention: X/Y are the floor
+    plan's horizontal position (raw pixel coordinates from the source
+    image, which can run into the thousands), Z is height off the floor
+    (0 to WALL_HEIGHT, e.g. 0-260).
+
+    glTF (and therefore Three.js/React Three Fiber) requires Y-up:
+    trimesh's GLB exporter does NOT do this conversion automatically --
+    it writes X/Y/Z straight through. Without this fix, wall "height"
+    lands on the depth axis and the raw pixel X/Y (up to ~3800 units)
+    lands on the "up" axis, producing tall diagonal slivers instead of
+    a normal-looking building.
+
+    This returns a single 4x4 transform that:
+      1. Translates so the horizontal (X, Y-pixel) center of the whole
+         model sits at the origin -- fixes "not in the middle".
+      2. Rotates -90 degrees about X, which maps old Z (height) -> new Y
+         (up) and old Y (pixel row) -> new -Z (depth), i.e. proper Z-up
+         to Y-up conversion.
+    """
+    translate = np.eye(4)
+    translate[0, 3] = -center_x
+    translate[1, 3] = -center_y
+
+    theta = -np.pi / 2
+    c, s = np.cos(theta), np.sin(theta)
+    rotate = np.eye(4)
+    rotate[1, 1] = c
+    rotate[1, 2] = -s
+    rotate[2, 1] = s
+    rotate[2, 2] = c
+
+    return rotate @ translate
+
+
 def main(meshes_dir, out_path):
-    scene = trimesh.Scene()
-    loaded = []
+    raw_meshes = {}
     for name, (filename, rgba) in PART_STYLE.items():
         path = os.path.join(meshes_dir, filename)
         if not os.path.exists(path):
@@ -55,11 +90,28 @@ def main(meshes_dir, out_path):
             continue
         mesh = trimesh.load(path, process=False)
         colorize(mesh, rgba)
+        raw_meshes[name] = mesh
+
+    if not raw_meshes:
+        raise RuntimeError("No mesh parts found -- run earlier pipeline stages first.")
+
+    # Combined bounding box across ALL parts (in original Z-up pixel
+    # space) so every part gets centered consistently relative to the
+    # whole model, not each part centered on itself.
+    all_bounds = np.array([m.bounds for m in raw_meshes.values()])  # (N, 2, 3)
+    overall_min = all_bounds[:, 0, :].min(axis=0)
+    overall_max = all_bounds[:, 1, :].max(axis=0)
+    center_x = (overall_min[0] + overall_max[0]) / 2
+    center_y = (overall_min[1] + overall_max[1]) / 2
+
+    transform = zup_to_yup_centered_transform(center_x, center_y)
+
+    scene = trimesh.Scene()
+    loaded = []
+    for name, mesh in raw_meshes.items():
+        mesh.apply_transform(transform)
         scene.add_geometry(mesh, node_name=name, geom_name=name)
         loaded.append(name)
-
-    if not loaded:
-        raise RuntimeError("No mesh parts found -- run earlier pipeline stages first.")
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     scene.export(out_path)
@@ -67,6 +119,8 @@ def main(meshes_dir, out_path):
     total_verts = sum(len(g.vertices) for g in scene.geometry.values())
     total_faces = sum(len(g.faces) for g in scene.geometry.values())
     print(f"[convert_to_glb] parts included: {loaded}")
+    print(f"[convert_to_glb] centered at pixel-space ({center_x:.0f}, {center_y:.0f}), "
+          f"converted Z-up -> Y-up")
     print(f"[convert_to_glb] {total_verts} verts / {total_faces} faces -> {out_path}")
 
 

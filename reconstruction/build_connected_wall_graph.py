@@ -20,129 +20,13 @@ Usage:
     python build_connected_wall_graph.py outputs/wall_segments.json outputs/vector_wall_graph_v3.json
 """
 
-import copy
 import json
 import math
 import sys
 from collections import defaultdict
-from shapely.geometry import LineString, Point
 
 SNAP_TOL = 6.0
 BRIDGE_TOL = 40.0
-
-
-def preprocess_walls(walls, extension_limit=80.0):
-    """
-    1. Determine orientation of each wall.
-    2. Extend walls at T-junctions and corners where endpoints are close.
-    3. Split intersecting wall segments using Shapely so they share a node in the graph.
-    """
-    formatted_walls = []
-    for w in walls:
-        p1, p2 = w["p1"], w["p2"]
-        if abs(p2[1] - p1[1]) < abs(p2[0] - p1[0]):
-            orientation = "horizontal"
-        else:
-            orientation = "vertical"
-        formatted_walls.append({
-            "start": list(p1),
-            "end": list(p2),
-            "orientation": orientation,
-            "thickness": w.get("thickness", 10.0)
-        })
-
-    horizontals = [w for w in formatted_walls if w["orientation"] == "horizontal"]
-    verticals = [w for w in formatted_walls if w["orientation"] == "vertical"]
-
-    def is_close(a, b):
-        return abs(a - b) < extension_limit
-
-    extended_walls = []
-    
-    # Extend horizontals to meet verticals
-    for h in horizontals:
-        h = copy.deepcopy(h)
-        x1, y = h["start"]
-        x2, _ = h["end"]
-        new_start = x1
-        new_end = x2
-        for v in verticals:
-            vx, vy1 = v["start"]
-            _, vy2 = v["end"]
-            if min(vy1, vy2) - extension_limit <= y <= max(vy1, vy2) + extension_limit:
-                if is_close(vx, x1):
-                    new_start = vx
-                if is_close(vx, x2):
-                    new_end = vx
-        h["start"] = [new_start, y]
-        h["end"] = [new_end, y]
-        extended_walls.append(h)
-
-    # Extend verticals to meet horizontals
-    for v in verticals:
-        v = copy.deepcopy(v)
-        x, y1 = v["start"]
-        _, y2 = v["end"]
-        new_start = y1
-        new_end = y2
-        for h in horizontals:
-            hx1, hy = h["start"]
-            hx2, _ = h["end"]
-            if min(hx1, hx2) - extension_limit <= x <= max(hx1, hx2) + extension_limit:
-                if is_close(hy, y1):
-                    new_start = hy
-                if is_close(hy, y2):
-                    new_end = hy
-        v["start"] = [x, new_start]
-        v["end"] = [x, new_end]
-        extended_walls.append(v)
-
-    # Split intersections using Shapely
-    lines = []
-    for idx, w in enumerate(extended_walls):
-        line = LineString([tuple(w["start"]), tuple(w["end"])])
-        lines.append({
-            "id": idx,
-            "line": line,
-            "data": w
-        })
-
-    split_points = [[] for _ in extended_walls]
-    for i in range(len(lines)):
-        for j in range(i + 1, len(lines)):
-            if lines[i]["line"].intersects(lines[j]["line"]):
-                inter = lines[i]["line"].intersection(lines[j]["line"])
-                if isinstance(inter, Point):
-                    p = [inter.x, inter.y]
-                    split_points[i].append(p)
-                    split_points[j].append(p)
-
-    split_walls = []
-    for i, item in enumerate(lines):
-        points = [item["data"]["start"], item["data"]["end"]]
-        points.extend(split_points[i])
-        
-        unique = []
-        for p in points:
-            pr = [round(p[0], 2), round(p[1], 2)]
-            if pr not in [[round(u[0], 2), round(u[1], 2)] for u in unique]:
-                unique.append(p)
-
-        if item["data"]["orientation"] == "horizontal":
-            unique.sort(key=lambda x: x[0])
-        else:
-            unique.sort(key=lambda x: x[1])
-
-        for a, b in zip(unique[:-1], unique[1:]):
-            if a != b:
-                split_walls.append({
-                    "p1": a,
-                    "p2": b,
-                    "thickness": item["data"]["thickness"]
-                })
-
-    return split_walls
-
 
 
 def segments_to_graph(walls):
@@ -294,7 +178,6 @@ def main(in_path, out_path, snap_tol=SNAP_TOL, bridge_tol=BRIDGE_TOL):
     with open(in_path) as f:
         data = json.load(f)
     walls = data["walls"]
-    walls = preprocess_walls(walls)
 
     nodes, edges, thickness = segments_to_graph(walls)
     print(f"[build_connected_wall_graph] {len(nodes)} nodes, {len(edges)} edges "

@@ -1,9 +1,14 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import ModelViewer from "./ModelViewer";
 import "./App.css";
 
-// ─── Detection data (from pipeline output) ────────────────────────────────
-const DETECTIONS = {
+// ─── Backend API base ──────────────────────────────────────────────────────
+// Frontend runs on :5173 (Vite), backend runs on :8000 (FastAPI) -- different
+// origins, so every API call needs the full URL, not a relative path.
+const API_BASE = "http://localhost:8000";
+
+// ─── Default/placeholder detection data (shown before any upload) ─────────
+const DEFAULT_DETECTIONS = {
   walls:    { count: 14, color: "var(--wall-color)" },
   doors:    { count: 8,  color: "var(--door-color)" },
   windows:  { count: 5,  color: "var(--window-color)" },
@@ -22,6 +27,12 @@ const CONTROLS = [
 ];
 
 // ─── AI Detection Overlay (SVG drawing of walls / rooms / doors / windows) ─
+// NOTE: this still draws hardcoded coordinates from the original test.png.
+// It is NOT yet wired to the real uploaded image's detections -- doing that
+// properly means redrawing from the live detections.json bboxes, scaled to
+// whatever image the user actually uploaded (different plans = different
+// pixel dimensions). Left as-is for now since it's cosmetic, not blocking;
+// flagged here so it isn't mistaken for already being dynamic.
 function DetectionOverlay() {
   const canvasRef = useRef(null);
 
@@ -33,8 +44,6 @@ function DetectionOverlay() {
     const H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
-    // Scale factor — the original image is ~4200×2481 px,
-    // we only use the left half (x < 2000), so map [0,2000]×[660,2200] → canvas
     const srcW = 2000;
     const srcH = 1540;
     const srcX0 = 0;
@@ -46,7 +55,6 @@ function DetectionOverlay() {
       return [(x - srcX0) * sx, (y - srcY0) * sy];
     }
 
-    // Walls (grey)
     const walls = [
       [[279, 2168], [1739, 2168]],
       [[276, 680],  [1773, 680]],
@@ -74,7 +82,6 @@ function DetectionOverlay() {
       ctx.stroke();
     });
 
-    // Rooms (green outlines)
     const rooms = [
       [[304, 660], [1768, 660], [1768, 2110], [304, 2110]],
       [[304, 660], [1288, 660], [1288, 1170], [304, 1170]],
@@ -99,7 +106,6 @@ function DetectionOverlay() {
       ctx.setLineDash([]);
     });
 
-    // Doors (orange rectangles)
     const doors = [
       [1082, 521, 1214, 700],
       [1328, 534, 1472, 704],
@@ -119,7 +125,6 @@ function DetectionOverlay() {
       ctx.strokeRect(ax, ay, bx - ax, by - ay);
     });
 
-    // Windows (blue rectangles)
     const windows = [
       [542, 659, 729, 700],
       [732, 659, 926, 700],
@@ -136,7 +141,6 @@ function DetectionOverlay() {
       ctx.strokeRect(ax, ay, bx - ax, by - ay);
     });
 
-    // Room labels
     const labels = [
       { text: "BEDROOM 3", x: 680, y: 1800 },
       { text: "BEDROOM 2", x: 680, y: 870 },
@@ -165,22 +169,156 @@ function DetectionOverlay() {
   );
 }
 
+// ─── Helpers ────────────────────────────────────────────────────────────
+
+function countDetections(detectionsArray) {
+  const counts = { wall: 0, door: 0, window: 0, room: 0 };
+  for (const d of detectionsArray) {
+    if (counts[d.class] !== undefined) counts[d.class] += 1;
+  }
+  return {
+    walls:    { count: counts.wall,   color: "var(--wall-color)" },
+    doors:    { count: counts.door,   color: "var(--door-color)" },
+    windows:  { count: counts.window, color: "var(--window-color)" },
+    rooms:    { count: counts.room,   color: "var(--room-color)" },
+    furniture:{ count: 0,             color: "var(--furniture-color)" },
+  };
+}
+
+// ─── Error boundary ─────────────────────────────────────────────────────
+// Wraps the 3D viewer specifically. Without this, any error thrown inside
+// <Canvas> (e.g. GLTFLoader failing on a bad/missing model URL) is
+// uncaught and crashes the ENTIRE React tree -- that's why the whole page
+// was going black instead of just the 3D panel.
+class ViewerErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidUpdate(prevProps) {
+    // Reset the boundary whenever a new model URL is tried, so retrying
+    // an upload after a failure doesn't stay stuck on the old error.
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          height: "100%", color: "#feb2b2", flexDirection: "column", gap: 8,
+          padding: 24, textAlign: "center", fontSize: 13,
+        }}>
+          <div>⚠ Failed to load 3D model</div>
+          <div style={{ opacity: 0.7, fontSize: 11 }}>{String(this.state.error.message || this.state.error)}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ─── App ───────────────────────────────────────────────────────────────────
-// ─── App ─────────────────────────────────────
-
-// ─── App ───────────────────────────────
 
 function App() {
-
-
-  const [modelUrl, setModelUrl] = useState(
-  "/models/96066e7b.glb"
-);
-
+  const [modelUrl, setModelUrl] = useState(null);
   const [processing, setProcessing] = useState(false);
-
   const [activeControl, setActiveControl] = useState("rotate");
+
+  const [detections, setDetections] = useState(DEFAULT_DETECTIONS);
+  const [uploadedPreviewUrl, setUploadedPreviewUrl] = useState(null);
+  const [jobStatus, setJobStatus] = useState(null);   // null | "queued" | "detecting" | "reconstructing" | "done" | "failed"
+  const [jobError, setJobError] = useState(null);
+  const fileInputRef = useRef(null);
+  const pollTimerRef = useRef(null);
+
+  function stopPolling() {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
+
+  // Clean up the polling interval if the component ever unmounts mid-job.
+  useEffect(() => () => stopPolling(), []);
+
+  async function pollJob(jobId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/plans/${jobId}`);
+      if (!res.ok) throw new Error(`Status check failed (HTTP ${res.status})`);
+      const data = await res.json();
+      setJobStatus(data.status);
+
+      if (data.status === "done") {
+        stopPolling();
+        setModelUrl(`${API_BASE}${data.model_url}`);
+
+        if (data.detections_url) {
+          const detRes = await fetch(`${API_BASE}${data.detections_url}`);
+          if (detRes.ok) {
+            const detArray = await detRes.json();
+            setDetections(countDetections(detArray));
+          }
+        }
+        setProcessing(false);
+      } else if (data.status === "failed") {
+        stopPolling();
+        setJobError(data.error || "Reconstruction failed for an unknown reason.");
+        setProcessing(false);
+      }
+      // else: still queued/detecting/reconstructing -- keep polling
+    } catch (err) {
+      stopPolling();
+      setJobError(err.message);
+      setProcessing(false);
+    }
+  }
+
+  async function handleFileSelected(file) {
+    if (!file) return;
+
+    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      setJobError(`Unsupported file type: ${file.type || "unknown"}. Use PNG, JPG, or WEBP.`);
+      return;
+    }
+
+    setJobError(null);
+    setJobStatus("queued");
+    setProcessing(true);
+    setUploadedPreviewUrl(URL.createObjectURL(file));
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`${API_BASE}/api/plans`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ? JSON.stringify(body.detail) : `Upload failed (HTTP ${res.status})`);
+      }
+      const { job_id } = await res.json();
+
+      pollTimerRef.current = setInterval(() => pollJob(job_id), 2000);
+    } catch (err) {
+      setJobError(err.message);
+      setProcessing(false);
+      setJobStatus(null);
+    }
+  }
+
+  const statusLabel = {
+    queued: "Queued…",
+    detecting: "Running AI detection…",
+    reconstructing: "Building 3D model…",
+  }[jobStatus] || null;
 
   return (
     <div className="app-wrapper">
@@ -193,9 +331,20 @@ function App() {
         </div>
         <div className="header-status">
           <div className="status-dot" />
-          Pipeline Ready · 4 Rooms · 14 Walls · 13 Openings
+          {processing
+            ? (statusLabel || "Processing…")
+            : `Pipeline Ready · ${detections.rooms.count} Rooms · ${detections.walls.count} Walls · ${detections.doors.count + detections.windows.count} Openings`}
         </div>
       </header>
+
+      {jobError && (
+        <div style={{
+          background: "#742a2a", color: "#feb2b2", padding: "8px 16px",
+          fontSize: 13, textAlign: "center",
+        }}>
+          ⚠ {jobError}
+        </div>
+      )}
 
       {/* Main */}
       <div className="main-content">
@@ -207,22 +356,46 @@ function App() {
           <div className="panel-section" style={{ flex: "0 0 45%" }}>
             <div className="panel-header">
               <span className="panel-title">Input: 2D Floor Plan</span>
-              <span className="panel-badge">2481 × 4200px</span>
+              <button
+                className="panel-badge"
+                style={{ cursor: "pointer", border: "none" }}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={processing}
+              >
+                {processing ? "Processing…" : "Upload"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                style={{ display: "none" }}
+                onChange={(e) => handleFileSelected(e.target.files?.[0])}
+              />
             </div>
             <div className="floor-plan-container">
-              <img
-                src="/floorplan.png"
-                alt="2D Floor Plan"
-                className="floor-plan-img"
-                onError={(e) => { e.target.style.display = "none"; }}
-              />
-              <div className="floor-plan-placeholder">
-                <span className="icon">📐</span>
-                <p>test.png · 4200 × 2481</p>
-                <p style={{ fontSize: "10px", marginTop: 4, opacity: 0.6 }}>
-                  Place test.png in public/
-                </p>
-              </div>
+              {uploadedPreviewUrl ? (
+                <img
+                  src={uploadedPreviewUrl}
+                  alt="Uploaded floor plan"
+                  className="floor-plan-img"
+                />
+              ) : (
+                <>
+                  <img
+                    src="/floorplan.png"
+                    alt="2D Floor Plan"
+                    className="floor-plan-img"
+                    onError={(e) => { e.target.style.display = "none"; }}
+                  />
+                  <div className="floor-plan-placeholder">
+                    <span className="icon">📐</span>
+                    <p>No floor plan uploaded yet</p>
+                    <p style={{ fontSize: "10px", marginTop: 4, opacity: 0.6 }}>
+                      Click "Upload" above to select an image
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -234,10 +407,9 @@ function App() {
             </div>
 
             <div className="detection-grid">
-              {/* Legend */}
               <div className="legend-panel">
                 <p className="legend-title">Detected Elements</p>
-                {Object.entries(DETECTIONS).map(([key, { count, color }]) => (
+                {Object.entries(detections).map(([key, { count, color }]) => (
                   <div key={key} className="legend-item">
                     <div
                       className={`legend-color ${key}`}
@@ -249,19 +421,17 @@ function App() {
                 ))}
               </div>
 
-              {/* Overlay canvas */}
               <div className="overlay-canvas-wrapper">
                 <DetectionOverlay />
               </div>
             </div>
 
-            {/* Stats strip */}
             <div className="detection-stats">
               {[
-                { id: "wall",   label: "Walls",   count: 14 },
-                { id: "door",   label: "Doors",   count: 8 },
-                { id: "window", label: "Windows", count: 5 },
-                { id: "room",   label: "Rooms",   count: 4 },
+                { id: "wall",   label: "Walls",   count: detections.walls.count },
+                { id: "door",   label: "Doors",   count: detections.doors.count },
+                { id: "window", label: "Windows", count: detections.windows.count },
+                { id: "room",   label: "Rooms",   count: detections.rooms.count },
               ].map(({ id, label, count }) => (
                 <div key={id} className="stat-item">
                   <div className={`stat-dot ${id}`} />
@@ -285,11 +455,13 @@ function App() {
 
           <div className="canvas-wrapper">
             <div className="canvas-grid" />
-            <ModelViewer
-             activeControl={activeControl}
-             setActiveControl={setActiveControl}
-               modelUrl={modelUrl}
-            />
+            <ViewerErrorBoundary resetKey={modelUrl}>
+              <ModelViewer
+               activeControl={activeControl}
+               setActiveControl={setActiveControl}
+                 modelUrl={modelUrl}
+              />
+            </ViewerErrorBoundary>
           </div>
 
           {/* Controls bar */}

@@ -28,9 +28,7 @@ Usage:
     numbers raised past what it printed.
 """
 
-import json
 import os
-import shutil
 import subprocess
 import sys
 
@@ -46,38 +44,9 @@ def run(cmd):
         sys.exit(result.returncode)
 
 
-def filter_left_detections(in_path, out_path):
-    """Filters YOLO detections to only keep elements in the left half (x < 2000)."""
-    with open(in_path, "r") as f:
-        data = json.load(f)
-    
-    if isinstance(data, dict):
-        detections = data.get("detections", data.get("boxes", []))
-    else:
-        detections = data
-
-    filtered = []
-    for d in detections:
-        bbox = d.get("bbox", d)
-        if isinstance(bbox, dict):
-            x2 = float(bbox.get("x2", bbox.get("xmax", 0)))
-        else:
-            x2 = float(bbox[2])
-        
-        if x2 < 2000:
-            filtered.append(d)
-
-    with open(out_path, "w") as f:
-        json.dump(filtered, f, indent=4)
-    print(f"[run_pipeline] Filtered {len(detections)} detections -> {len(filtered)} in floor plan (left) region.")
-
-
-def main(detections_path, out_dir, snap_tol=6.0, bridge_tol=40.0, max_assign_dist=30.0):
+def main(detections_path, out_dir, snap_tol=6.0, bridge_tol=90.0, max_assign_dist=80.0):
     meshes_dir = os.path.join(out_dir, "meshes")
     os.makedirs(meshes_dir, exist_ok=True)
-
-    filtered_detections = os.path.join(out_dir, "filtered_v2_detections.json")
-    filter_left_detections(detections_path, filtered_detections)
 
     wall_segments = os.path.join(out_dir, "wall_segments.json")
     wall_graph = os.path.join(out_dir, "vector_wall_graph_v3.json")
@@ -91,7 +60,7 @@ def main(detections_path, out_dir, snap_tol=6.0, bridge_tol=40.0, max_assign_dis
 
     py = sys.executable
 
-    run([py, os.path.join(HERE, "extract_wall_segments.py"), filtered_detections, wall_segments])
+    run([py, os.path.join(HERE, "extract_wall_segments.py"), detections_path, wall_segments])
     run([py, os.path.join(HERE, "build_connected_wall_graph.py"), wall_segments, wall_graph,
          snap_tol, bridge_tol])
     run([py, os.path.join(HERE, "vector_room_face_extractor.py"), wall_graph, rooms,
@@ -101,26 +70,19 @@ def main(detections_path, out_dir, snap_tol=6.0, bridge_tol=40.0, max_assign_dis
     run([py, os.path.join(HERE, "door_window_mesh_generator.py"),
          os.path.join(meshes_dir, "wall_openings.json"), doors_windows_obj])
     run([py, os.path.join(HERE, "stair_mesh_generator.py"), wall_segments, stairs_obj])
-    run([py, os.path.join(HERE, "create_room_floor_mesh.py"), rooms, floors_obj])
+    run([py, os.path.join(HERE, "create_room_floor_mesh.py"), rooms, floors_obj, wall_segments])
     run([py, os.path.join(HERE, "combine_final_house.py"), meshes_dir, combined_obj])
     run([py, os.path.join(HERE, "convert_to_glb.py"), meshes_dir, combined_glb])
 
     print(f"\n[run_pipeline] DONE. Final model: {combined_glb}")
-    
-    # Auto-copy final GLB to frontend assets
-    frontend_glb = os.path.join(HERE, "..", "frontend", "public", "models", "plan2scene_vector_house.glb")
-    os.makedirs(os.path.dirname(frontend_glb), exist_ok=True)
-    try:
-        shutil.copy(combined_glb, frontend_glb)
-        print(f"[run_pipeline] Automatically copied final GLB to frontend assets: {frontend_glb}")
-    except Exception as e:
-        print(f"[run_pipeline] WARNING: Failed to copy GLB to frontend: {e}")
+    print(f"[run_pipeline] Copy/symlink this into your frontend's public/models/ "
+          f"folder for ModelViewer.jsx to load it.")
 
 
 if __name__ == "__main__":
     detections_path = sys.argv[1] if len(sys.argv) > 1 else "outputs/v2_detections.json"
     out_dir = sys.argv[2] if len(sys.argv) > 2 else "outputs"
     snap_tol = float(sys.argv[3]) if len(sys.argv) > 3 else 6.0
-    bridge_tol = float(sys.argv[4]) if len(sys.argv) > 4 else 40.0
-    max_assign_dist = float(sys.argv[5]) if len(sys.argv) > 5 else 30.0
+    bridge_tol = float(sys.argv[4]) if len(sys.argv) > 4 else 90.0
+    max_assign_dist = float(sys.argv[5]) if len(sys.argv) > 5 else 80.0
     main(detections_path, out_dir, snap_tol, bridge_tol, max_assign_dist)
