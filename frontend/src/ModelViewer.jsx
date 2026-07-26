@@ -100,6 +100,8 @@ function LayerToggles({ visibleLayers, setVisibleLayers }) {
     <div
       style={{
         position: "absolute",
+        zIndex: 20,
+        pointerEvents: "auto",
         top: 12,
         left: 12,
         background: "rgba(20, 20, 20, 0.7)",
@@ -175,7 +177,7 @@ export default function ModelViewer({ modelUrl, activeControl, setActiveControl 
   if (!modelUrl) {
     return (
       <div style={{
-        width: "100%", height: "100vh", background: "#1a1a1a",
+        width: "100%", height: "100%", background: "#1a1a1a",
         display: "flex", alignItems: "center", justifyContent: "center",
         color: "#8892a4", fontFamily: "system-ui, sans-serif", fontSize: 14,
       }}>
@@ -185,7 +187,7 @@ export default function ModelViewer({ modelUrl, activeControl, setActiveControl 
   }
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100vh", background: "#1a1a1a" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%", background: "#1a1a1a" }}>
       <LayerToggles visibleLayers={visibleLayers} setVisibleLayers={setVisibleLayers} />
       {/* key={modelUrl} forces a full remount (fresh camera state) whenever
           a new model finishes reconstructing, instead of keeping stale

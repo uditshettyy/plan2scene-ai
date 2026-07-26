@@ -164,7 +164,7 @@ def main(in_path, out_path):
     if isinstance(detections, dict):
         detections = detections.get("detections", detections.get("boxes", []))
 
-    walls, doors, windows, stairs = [], [], [], []
+    walls, doors, windows, stairs, room_boxes = [], [], [], [], []
     for det in detections:
         cls = det["class"]
         bbox = normalize_bbox(det["bbox"])
@@ -181,10 +181,14 @@ def main(in_path, out_path):
         elif cls == "stairs":
             x1, y1, x2, y2 = bbox
             stairs.append({"bbox": bbox, "center": [(x1 + x2) / 2, (y1 + y2) / 2]})
-        # "room" class boxes are ignored here -- rooms are derived
-        # geometrically from the wall graph (vector_room_face_extractor.py),
-        # not from the room detector, since the detector's box is only a
-        # rough localization hint, not a polygon.
+        elif cls == "room":
+            # Not used for wall-graph reconstruction (that still comes
+            # from the actual wall geometry, which is the geometrically
+            # correct source). Kept here purely as a fallback so
+            # create_room_floor_mesh.py can still render an approximate
+            # floor when the wall graph is too sparse to close any real
+            # room loop (e.g. too few wall detections to form a cycle).
+            room_boxes.append({"bbox": bbox, "confidence": det.get("confidence")})
 
     merged_walls = merge_collinear(walls)
     for i, d in enumerate(doors):
@@ -193,15 +197,18 @@ def main(in_path, out_path):
         w["id"] = i
     for i, s in enumerate(stairs):
         s["id"] = i
+    for i, r in enumerate(room_boxes):
+        r["id"] = i
 
-    out = {"walls": merged_walls, "doors": doors, "windows": windows, "stairs": stairs}
+    out = {"walls": merged_walls, "doors": doors, "windows": windows,
+           "stairs": stairs, "room_boxes": room_boxes}
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
 
     print(f"[extract_wall_segments] {len(walls)} raw wall boxes -> "
           f"{len(merged_walls)} merged wall segments")
     print(f"[extract_wall_segments] {len(doors)} doors, {len(windows)} windows, "
-          f"{len(stairs)} stairs")
+          f"{len(stairs)} stairs, {len(room_boxes)} room boxes (fallback only)")
 
 
 if __name__ == "__main__":
