@@ -1,40 +1,3 @@
-"""
-backend/main.py
-
-Roadmap steps 1-3:
-    1. Backend API
-    2. Connect YOLO inference
-    3. Automate reconstruction pipeline
-
-Flow per uploaded floor plan:
-    POST /api/plans
-        -> save uploaded image to uploads/{job_id}/input.<ext>
-        -> create outputs/{job_id}/ (isolated per-job, so concurrent
-           uploads never collide -- run_pipeline.py already accepts an
-           arbitrary out_dir, so this needed zero changes there)
-        -> kick off a background job:
-             a. run YOLO inference on the uploaded image
-                -> outputs/{job_id}/v2_detections.json
-             b. run reconstruction/run_pipeline.py on that
-                -> outputs/{job_id}/plan2scene_vector_house.glb
-        -> respond immediately with {job_id, status: "queued"}
-
-    GET  /api/plans/{job_id}          -> poll job status + log
-    GET  /api/plans/{job_id}/model    -> serves the finished GLB
-    GET  /api/plans/{job_id}/detections -> serves the raw YOLO detections
-                                            (for the "AI Detection Overlay" panel)
-
-Job state is kept in-memory (a plain dict). That's fine for local dev /
-single-process use, but it will NOT survive a server restart and won't
-work if you ever run multiple backend workers/processes -- if you get
-to a point where that matters, swap `JOBS` for a real store (sqlite,
-redis) without changing any endpoint logic.
-
-Run with:
-    pip install fastapi uvicorn python-multipart
-    uvicorn backend.main:app --reload --port 8000
-"""
-
 import shutil
 import subprocess
 import sys
@@ -48,9 +11,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 UPLOADS_DIR = REPO_ROOT / "uploads"
@@ -61,26 +21,19 @@ RUN_PIPELINE_SCRIPT = REPO_ROOT / "reconstruction" / "run_pipeline.py"
 UPLOADS_DIR.mkdir(exist_ok=True)
 OUTPUTS_DIR.mkdir(exist_ok=True)
 
-# Calibrated from the last known-good manual run on your sample floor
-# plan. These are still per-image-scale sensitive (see the wall-graph
-# debugging from earlier) -- exposed as request params so the frontend
-# can eventually let a user retry with different values (roadmap step 8).
 DEFAULT_SNAP_TOL = 6.0
 DEFAULT_BRIDGE_TOL = 90.0
 DEFAULT_MAX_ASSIGN_DIST = 80.0
 
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-# ---------------------------------------------------------------------------
-# In-memory job store
-# ---------------------------------------------------------------------------
 
 JOBS: dict[str, dict] = {}
 
 
 def new_job_record() -> dict:
     return {
-        "status": "queued",       # queued -> detecting -> reconstructing -> done | failed
+        "status": "queued",      
         "created_at": datetime.now(timezone.utc).isoformat(),
         "log": [],
         "error": None,
@@ -93,9 +46,6 @@ def log(job_id: str, message: str):
         JOBS[job_id]["log"].append(message)
 
 
-# ---------------------------------------------------------------------------
-# Pipeline execution (runs in a background thread per job)
-# ---------------------------------------------------------------------------
 
 def run_subprocess(job_id: str, cmd: list[str]) -> None:
     log(job_id, f"$ {' '.join(str(c) for c in cmd)}")
@@ -168,15 +118,11 @@ def process_job(
         log(job_id, f"FAILED: {e}")
 
 
-# ---------------------------------------------------------------------------
-# API
-# ---------------------------------------------------------------------------
-
 app = FastAPI(title="Plan2Scene-AI API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=["http://localhost:5173"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

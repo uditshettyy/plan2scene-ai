@@ -3,11 +3,12 @@ import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Environment, useGLTF } from "@react-three/drei";
 
-const LAYER_NAMES = ["floor", "walls", "doors_windows", "stairs"];
+const LAYER_NAMES = ["floor", "walls", "doors", "windows", "stairs"];
 const LAYER_LABELS = {
   floor: "Floor",
   walls: "Walls",
-  doors_windows: "Doors & Windows",
+  doors: "Doors",
+  windows: "Windows",
   stairs: "Stairs",
 };
 

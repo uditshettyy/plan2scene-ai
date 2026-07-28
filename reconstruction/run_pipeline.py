@@ -8,7 +8,7 @@ Runs the full Plan2Scene-AI pipeline, detection output -> final GLB:
         -> build_connected_wall_graph.py  -> vector_wall_graph_v3.json
         -> vector_room_face_extractor.py  -> vector_rooms.json
         -> create_wall_mesh.py            -> meshes/vector_walls.obj (+ wall_openings.json)
-        -> door_window_mesh_generator.py  -> meshes/doors_windows.obj
+        -> door_window_mesh_generator.py  -> meshes/doors.obj + meshes/windows.obj
         -> stair_mesh_generator.py        -> meshes/stairs.obj
         -> create_room_floor_mesh.py      -> meshes/vector_room_floors.obj
         -> combine_final_house.py         -> plan2scene_vector_house.obj
@@ -52,7 +52,8 @@ def main(detections_path, out_dir, snap_tol=6.0, bridge_tol=90.0, max_assign_dis
     wall_graph = os.path.join(out_dir, "vector_wall_graph_v3.json")
     rooms = os.path.join(out_dir, "vector_rooms.json")
     walls_obj = os.path.join(meshes_dir, "vector_walls.obj")
-    doors_windows_obj = os.path.join(meshes_dir, "doors_windows.obj")
+    doors_obj = os.path.join(meshes_dir, "doors.obj")
+    windows_obj = os.path.join(meshes_dir, "windows.obj")
     stairs_obj = os.path.join(meshes_dir, "stairs.obj")
     floors_obj = os.path.join(meshes_dir, "vector_room_floors.obj")
     combined_obj = os.path.join(out_dir, "plan2scene_vector_house.obj")
@@ -68,7 +69,7 @@ def main(detections_path, out_dir, snap_tol=6.0, bridge_tol=90.0, max_assign_dis
     run([py, os.path.join(HERE, "create_wall_mesh.py"), wall_graph, wall_segments, walls_obj,
          max_assign_dist])
     run([py, os.path.join(HERE, "door_window_mesh_generator.py"),
-         os.path.join(meshes_dir, "wall_openings.json"), doors_windows_obj])
+         os.path.join(meshes_dir, "wall_openings.json"), doors_obj, windows_obj])
     run([py, os.path.join(HERE, "stair_mesh_generator.py"), wall_segments, stairs_obj])
     run([py, os.path.join(HERE, "create_room_floor_mesh.py"), rooms, floors_obj, wall_segments])
     run([py, os.path.join(HERE, "combine_final_house.py"), meshes_dir, combined_obj])

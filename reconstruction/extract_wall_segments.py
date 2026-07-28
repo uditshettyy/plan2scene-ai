@@ -172,6 +172,34 @@ def close_wall_gaps(walls, search_radius=180.0, already_connected_tol=10.0):
     return walls
 
 
+def normalize_wall_thickness(walls, min_ratio=0.6, max_ratio=1.6, absolute_min=6.0):
+    """
+    Per-wall thickness comes directly from each detected box's short
+    axis (see bbox_to_segment), which is noisy -- a single wall can get
+    a much thinner or thicker reading than its real neighbors just from
+    detection jitter, making the 3D model look visually inconsistent
+    even though the underlying floor plan uses a consistent wall
+    thickness. Clamping each wall's thickness to within
+    [min_ratio, max_ratio] of the MEDIAN thickness across all walls
+    keeps real variation (e.g. a genuinely thicker exterior wall vs
+    thinner interior partitions) while removing one-off outliers.
+    """
+    if not walls:
+        return walls
+    thicknesses = sorted(w["thickness"] for w in walls)
+    median = thicknesses[len(thicknesses) // 2]
+    lo, hi = max(absolute_min, median * min_ratio), median * max_ratio
+    changed = 0
+    for w in walls:
+        clamped = min(max(w["thickness"], lo), hi)
+        if abs(clamped - w["thickness"]) > 0.5:
+            changed += 1
+        w["thickness"] = clamped
+    print(f"[extract_wall_segments] normalized thickness on {changed} wall(s) "
+          f"toward median={median:.1f}px (allowed range {lo:.1f}-{hi:.1f}px)")
+    return walls
+
+
 def merge_collinear(walls):
     """Group walls by orientation (horizontal/vertical) and merge those
     that share a line and are close enough along that line to be one
@@ -265,6 +293,7 @@ def main(in_path, out_path):
 
     merged_walls = merge_collinear(walls)
     merged_walls = close_wall_gaps(merged_walls)
+    merged_walls = normalize_wall_thickness(merged_walls)
     for i, d in enumerate(doors):
         d["id"] = i
     for i, w in enumerate(windows):

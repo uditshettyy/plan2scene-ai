@@ -30,10 +30,11 @@ import trimesh
 
 PART_STYLE = {
     # name -> (filename, RGBA color 0-255)
-    "floor":         ("vector_room_floors.obj", [214, 200, 180, 255]),
-    "walls":         ("vector_walls.obj",       [235, 235, 230, 255]),
-    "doors_windows": ("doors_windows.obj",      [120, 150, 200, 180]),
-    "stairs":        ("stairs.obj",             [160, 160, 165, 255]),
+    "floor":   ("vector_room_floors.obj", [214, 200, 180, 255]),
+    "walls":   ("vector_walls.obj",       [235, 235, 230, 255]),
+    "doors":   ("doors.obj",              [101, 67, 33, 255]),    # wood brown
+    "windows": ("windows.obj",            [140, 180, 210, 160]),  # glass blue, semi-transparent
+    "stairs":  ("stairs.obj",             [160, 160, 165, 255]),
 }
 
 

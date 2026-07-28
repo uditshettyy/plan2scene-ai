@@ -31,7 +31,8 @@ import trimesh
 PARTS = {
     "floor": "vector_room_floors.obj",
     "walls": "vector_walls.obj",
-    "doors_windows": "doors_windows.obj",
+    "doors": "doors.obj",
+    "windows": "windows.obj",
     "stairs": "stairs.obj",
 }
 

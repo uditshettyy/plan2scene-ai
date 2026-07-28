@@ -7,18 +7,19 @@ Input:
     outputs/meshes/wall_openings.json   (from create_wall_mesh.py)
 
 Output:
-    outputs/meshes/doors_windows.obj
+    outputs/meshes/doors.obj
+    outputs/meshes/windows.obj
 
-For each opening, builds a thin flat panel (the door slab, or the
-window glazing) sized to the opening and centered in the wall
-thickness. This is intentionally simple geometry -- a frame + panel,
-not modeled hardware -- matching the level of detail of the rest of
-the current pipeline. It's a natural place to later swap in actual
-door/window asset meshes keyed by `kind`.
+Doors and windows are now written as SEPARATE files (previously
+combined into one doors_windows.obj), so convert_to_glb.py can give
+them different materials/colors -- e.g. doors in brown, windows in
+glass-blue. If one category has zero detections, its file is simply
+not written (downstream stages already handle missing optional parts).
 
 Usage:
     python door_window_mesh_generator.py outputs/meshes/wall_openings.json \
-                                          outputs/meshes/doors_windows.obj
+                                          outputs/meshes/doors.obj \
+                                          outputs/meshes/windows.obj
 """
 
 import json
@@ -65,12 +66,11 @@ def make_panel(t0, t1, z0, z1, origin, edge_dir, edge_normal, wall_thickness):
     return trimesh.Trimesh(vertices=verts, faces=np.array(faces), process=False)
 
 
-def main(openings_path, out_path):
-    with open(openings_path) as f:
-        openings = json.load(f)
-
+def build_panels(openings, kind):
     panels = []
     for op in openings:
+        if op["kind"] != kind:
+            continue
         t0 = op["t0"] + FRAME_MARGIN
         t1 = op["t1"] - FRAME_MARGIN
         if t1 <= t0:
@@ -84,18 +84,26 @@ def main(openings_path, out_path):
             edge_normal=op["edge_normal"], wall_thickness=op["thickness"],
         )
         panels.append(panel)
+    return panels
 
-    if not panels:
-        print("[door_window_mesh_generator] no openings found, nothing to generate")
-        return
 
-    mesh = trimesh.util.concatenate(panels)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    mesh.export(out_path)
-    print(f"[door_window_mesh_generator] {len(panels)} panels -> {out_path}")
+def main(openings_path, doors_out_path, windows_out_path):
+    with open(openings_path) as f:
+        openings = json.load(f)
+
+    for kind, out_path in [("door", doors_out_path), ("window", windows_out_path)]:
+        panels = build_panels(openings, kind)
+        if not panels:
+            print(f"[door_window_mesh_generator] no {kind}s found, skipping {out_path}")
+            continue
+        mesh = trimesh.util.concatenate(panels)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        mesh.export(out_path)
+        print(f"[door_window_mesh_generator] {len(panels)} {kind} panel(s) -> {out_path}")
 
 
 if __name__ == "__main__":
     openings_path = sys.argv[1] if len(sys.argv) > 1 else "outputs/meshes/wall_openings.json"
-    out_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/meshes/doors_windows.obj"
-    main(openings_path, out_path)
+    doors_out_path = sys.argv[2] if len(sys.argv) > 2 else "outputs/meshes/doors.obj"
+    windows_out_path = sys.argv[3] if len(sys.argv) > 3 else "outputs/meshes/windows.obj"
+    main(openings_path, doors_out_path, windows_out_path)
