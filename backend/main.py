@@ -214,3 +214,11 @@ async def get_job_detections(job_id: str):
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Add root directory to sys.path if running directly from inside backend/
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    uvicorn.run(app, host="0.0.0.0", port=8000)

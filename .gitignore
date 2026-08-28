@@ -49,6 +49,11 @@ outputs/
 *.npy
 *.npz
 
+# --- Runtime uploads & job outputs ---
+uploads/
+outputs_by_job/
+
 # --- System files ---
 .DS_Store
 Thumbs.db
+

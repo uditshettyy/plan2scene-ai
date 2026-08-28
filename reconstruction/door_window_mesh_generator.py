@@ -88,8 +88,12 @@ def build_panels(openings, kind):
 
 
 def main(openings_path, doors_out_path, windows_out_path):
-    with open(openings_path) as f:
-        openings = json.load(f)
+    if not os.path.exists(openings_path):
+        print(f"[door_window_mesh_generator] WARNING: {openings_path} not found, skipping.")
+        openings = []
+    else:
+        with open(openings_path) as f:
+            openings = json.load(f)
 
     for kind, out_path in [("door", doors_out_path), ("window", windows_out_path)]:
         panels = build_panels(openings, kind)
